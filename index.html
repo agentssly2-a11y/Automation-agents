@@ -1,0 +1,1193 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+
+/* ══════════════════════════════════════════
+   AUTOMATA PLATFORM — Clean Build
+   All definitions ordered top→bottom
+   No missing variable errors
+══════════════════════════════════════════ */
+
+const HUN = "917673962811";
+
+const T = {
+  bg:"#06080f", deep:"#03040a", panel:"#0c1020",
+  card:"#101628", cardHi:"#161e36",
+  cyan:"#00d2ff", green:"#00f0a0", orange:"#ff7040",
+  purple:"#9966ff", pink:"#ff4488",
+  text:"#dde4f0", soft:"#7a88aa", muted:"#3a4560",
+  border:"rgba(0,210,255,0.1)",
+};
+
+/* ── 1. PURE HELPERS (no hooks) ── */
+const animSw = (v, d = 0, dir = "up") => ({
+  opacity: v ? 1 : 0,
+  transform: v ? "none"
+    : dir === "up" ? "translateY(38px)"
+    : dir === "left" ? "translateX(-38px)"
+    : dir === "right" ? "translateX(38px)"
+    : "scale(0.9)",
+  transition: `opacity 0.65s ease ${d}ms, transform 0.65s cubic-bezier(0.34,1.56,0.64,1) ${d}ms`,
+});
+
+const pad = n => String(n).padStart(2, "0");
+
+/* ── 2. CUSTOM HOOKS ── */
+function useReveal(threshold = 0.1) {
+  const ref = useRef();
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) setVisible(true); },
+      { threshold }
+    );
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, []);
+  return [ref, visible];
+}
+
+function useStagger(count, active, delay = 90) {
+  const [shown, setShown] = useState([]);
+  useEffect(() => {
+    if (!active) return;
+    setShown([]);
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => setShown(p => [...p, i]), i * delay + 80);
+    }
+  }, [active]);
+  return i => shown.includes(i);
+}
+
+function useActiveSection(ids) {
+  const [active, setActive] = useState(ids[0]);
+  useEffect(() => {
+    const obs = ids.map(id => {
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const o = new IntersectionObserver(
+        ([e]) => { if (e.intersectionRatio > 0.45) setActive(id); },
+        { threshold: 0.45 }
+      );
+      o.observe(el);
+      return o;
+    });
+    return () => obs.forEach(o => o && o.disconnect());
+  }, []);
+  return active;
+}
+
+/* ── 3. ATOM COMPONENTS ── */
+
+function Btn({ children, onClick, col, ghost, sm, full, disabled, glow }) {
+  const color = col || T.cyan;
+  const [h, setH] = useState(false);
+  return (
+    <button
+      onClick={onClick} disabled={disabled}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{
+        display:"inline-flex", alignItems:"center", justifyContent:"center", gap:8,
+        padding: sm ? "9px 20px" : "13px 32px",
+        fontSize: sm ? 10 : 12,
+        fontFamily:"'Space Mono',monospace", letterSpacing:2, fontWeight: ghost ? 400 : 700,
+        borderRadius:10, cursor: disabled ? "not-allowed" : "pointer",
+        width: full ? "100%" : undefined,
+        border: ghost ? `1px solid ${h ? color+"88" : "rgba(255,255,255,0.1)"}` : "none",
+        background: disabled ? `${color}22`
+          : ghost ? (h ? `${color}14` : "rgba(255,255,255,0.03)")
+          : `linear-gradient(135deg,${color}ee,${color}88)`,
+        color: ghost ? (h ? color : T.soft) : T.bg,
+        boxShadow: ghost ? "none"
+          : disabled ? "none"
+          : (h||glow) ? `0 0 36px ${color}66,0 8px 24px ${color}44`
+          : `0 4px 16px ${color}44`,
+        transform: !disabled && h ? "translateY(-2px)" : "none",
+        transition:"all 0.22s ease",
+      }}
+    >{children}</button>
+  );
+}
+
+function Dot({ col, label }) {
+  const c = col || T.green;
+  return (
+    <div style={{ display:"inline-flex", alignItems:"center", gap:7 }}>
+      <div style={{ position:"relative", width:8, height:8 }}>
+        <div style={{ position:"absolute", width:8, height:8, borderRadius:"50%", background:c, animation:"pulseD 2s infinite" }} />
+        <div style={{ position:"absolute", width:8, height:8, borderRadius:"50%", background:c, opacity:.3, animation:"pingD 2s ease infinite" }} />
+      </div>
+      {label && <span style={{ fontFamily:"'Space Mono'", fontSize:9, letterSpacing:2, color:c }}>{label}</span>}
+    </div>
+  );
+}
+
+function Tag({ children, col }) {
+  const c = col || T.cyan;
+  return (
+    <div style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"8px 18px", border:`1px solid ${c}33`, borderRadius:100, background:`${c}0a`, marginBottom:18, backdropFilter:"blur(8px)" }}>
+      <Dot col={c} />
+      <span style={{ fontFamily:"'Space Mono'", fontSize:10, letterSpacing:3, color:c }}>{children}</span>
+    </div>
+  );
+}
+
+function StatusPill({ status }) {
+  const map = { running:[T.green,"RUNNING"], paused:[T.orange,"PAUSED"], live:[T.green,"LIVE"] };
+  const [c, l] = map[status] || [T.muted, "UNKNOWN"];
+  return (
+    <div style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"3px 10px", background:`${c}14`, border:`1px solid ${c}33`, borderRadius:100 }}>
+      <div style={{ width:5, height:5, borderRadius:"50%", background:c, animation:"pulseD 2s infinite" }} />
+      <span style={{ fontFamily:"'Space Mono'", fontSize:8, letterSpacing:1, color:c }}>{l}</span>
+    </div>
+  );
+}
+
+/* ── 4. VISUAL COMPONENTS ── */
+
+function Particles() {
+  const ref = useRef();
+  useEffect(() => {
+    const c = ref.current; if (!c) return;
+    const ctx = c.getContext("2d");
+    let W, H, pts = [], id;
+    const init = () => {
+      W = c.width = window.innerWidth; H = c.height = window.innerHeight;
+      pts = Array.from({ length:38 }, () => ({
+        x: Math.random()*W, y: Math.random()*H,
+        vx:(Math.random()-.5)*.22, vy:(Math.random()-.5)*.22,
+      }));
+    };
+    const draw = () => {
+      ctx.clearRect(0,0,W,H);
+      ctx.strokeStyle="rgba(0,210,255,0.03)"; ctx.lineWidth=1;
+      for(let x=0;x<W;x+=120){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+      for(let y=0;y<H;y+=120){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+      pts.forEach(p=>{
+        p.x+=p.vx; p.y+=p.vy;
+        if(p.x<0||p.x>W)p.vx*=-1; if(p.y<0||p.y>H)p.vy*=-1;
+        ctx.beginPath(); ctx.arc(p.x,p.y,1.2,0,Math.PI*2);
+        ctx.fillStyle=T.cyan; ctx.globalAlpha=.28; ctx.fill(); ctx.globalAlpha=1;
+      });
+      pts.forEach((a,i)=>pts.slice(i+1).forEach(b=>{
+        const d=Math.hypot(a.x-b.x,a.y-b.y);
+        if(d<100){ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle=`rgba(0,210,255,${.07*(1-d/100)})`;ctx.lineWidth=.5;ctx.stroke();}
+      }));
+      id=requestAnimationFrame(draw);
+    };
+    init(); draw();
+    window.addEventListener("resize",init);
+    return()=>{cancelAnimationFrame(id);window.removeEventListener("resize",init);};
+  },[]);
+  return <canvas ref={ref} style={{position:"fixed",inset:0,zIndex:0,pointerEvents:"none"}}/>;
+}
+
+function SpinCube({ s = 100 }) {
+  const [rx, setRx] = useState(12);
+  const [ry, setRy] = useState(0);
+  useEffect(() => {
+    let id;
+    const t = () => { setRx(r=>r+.16); setRy(r=>r+.3); id=requestAnimationFrame(t); };
+    id = requestAnimationFrame(t);
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const face = (tf, op) => (
+    <div style={{ position:"absolute", width:s, height:s, background:`rgba(0,210,255,${op})`, border:`1px solid rgba(0,210,255,0.2)`, transform:tf, backfaceVisibility:"hidden", boxShadow:`inset 0 0 20px rgba(0,210,255,${op*.5})` }} />
+  );
+  return (
+    <div style={{ width:s, height:s, perspective:540 }}>
+      <div style={{ width:s, height:s, position:"relative", transformStyle:"preserve-3d", transform:`rotateX(${rx}deg) rotateY(${ry}deg)` }}>
+        {face(`translateZ(${s/2}px)`,.08)} {face(`translateZ(-${s/2}px) rotateY(180deg)`,.04)}
+        {face(`rotateY(90deg) translateZ(${s/2}px)`,.06)} {face(`rotateY(-90deg) translateZ(${s/2}px)`,.07)}
+        {face(`rotateX(90deg) translateZ(${s/2}px)`,.05)} {face(`rotateX(-90deg) translateZ(${s/2}px)`,.06)}
+      </div>
+    </div>
+  );
+}
+
+function Wave({ active, col }) {
+  const color = col || T.purple;
+  const [bars, setBars] = useState(Array(26).fill(3));
+  useEffect(() => {
+    if (!active) { setBars(Array(26).fill(3)); return; }
+    const id = setInterval(() => setBars(Array.from({length:26}, ()=>Math.random()*44+6)), 110);
+    return () => clearInterval(id);
+  }, [active]);
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:2.5, height:54 }}>
+      {bars.map((h,i) => <div key={i} style={{ width:2.5, height:active?h:3, background:active?color:`${color}33`, borderRadius:2, transition:"height 0.1s ease" }} />)}
+    </div>
+  );
+}
+
+function Clock() {
+  const [t, setT] = useState("");
+  useEffect(() => {
+    const upd = () => { const d=new Date(); setT(`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`); };
+    upd(); const id = setInterval(upd,1000); return () => clearInterval(id);
+  }, []);
+  return <span style={{ fontFamily:"'Space Mono'", fontSize:11, color:T.cyan, letterSpacing:2 }}>{t}</span>;
+}
+
+/* ── 5. LIVE AI CHAT ── */
+function AIChat({ bizName }) {
+  const [msgs, setMsgs] = useState([
+    { role:"assistant", text:`👋 Hi! I'm the 24/7 AI agent for ${bizName||"your business"}. Ask me anything!` }
+  ]);
+  const [inp, setInp] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [ms, setMs] = useState(null);
+  const endRef = useRef();
+  const quick = ["Hours?","How to book?","Menu prices?","Delivery?"];
+
+  const send = useCallback(async (txt) => {
+    const q = (txt||inp).trim(); if (!q||loading) return;
+    setInp(""); setLoading(true); setMs(null);
+    const history = [...msgs, {role:"user",text:q}];
+    setMsgs(history);
+    const t0 = performance.now();
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:180,
+          system:`You are an AI customer service agent for "${bizName||"a restaurant"}". Be warm and concise (max 50 words). Open 9AM–11PM daily. Reservations via WhatsApp +91 7673962811. Delivery on Zomato/Swiggy. End with one helpful offer.`,
+          messages:history.map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.text}))
+        })
+      });
+      const d = await res.json();
+      const reply = d.content?.[0]?.text || "We're open 9AM–11PM. How can I help?";
+      setMs(Math.round(performance.now()-t0));
+      setMsgs(p=>[...p,{role:"assistant",text:reply}]);
+    } catch {
+      setMsgs(p=>[...p,{role:"assistant",text:"We're open 9AM–11PM daily! Book via WhatsApp: +91 7673962811"}]);
+    }
+    setLoading(false);
+  }, [msgs, inp, loading, bizName]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({behavior:"smooth"}); }, [msgs,loading]);
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,paddingBottom:8}}>
+        {msgs.map((m,i) => (
+          <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+            <div style={{maxWidth:"82%",padding:"9px 14px",borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",background:m.role==="user"?`linear-gradient(135deg,${T.cyan}33,${T.green}22)`:T.cardHi,border:`1px solid ${m.role==="user"?T.cyan+"33":"rgba(255,255,255,0.06)"}`,fontSize:13.5,lineHeight:1.7,color:m.role==="user"?"#eef2ff":T.soft}}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{display:"flex"}}>
+            <div style={{padding:"9px 16px",borderRadius:"14px 14px 14px 4px",background:T.cardHi,border:"1px solid rgba(255,255,255,0.06)",display:"flex",gap:4,alignItems:"center"}}>
+              {[0,1,2].map(i=><div key={i} style={{width:6,height:6,borderRadius:"50%",background:T.cyan,animation:"dotB 1.2s ease infinite",animationDelay:`${i*.2}s`}}/>)}
+            </div>
+          </div>
+        )}
+        <div ref={endRef}/>
+      </div>
+      {ms && <div style={{fontFamily:"'Space Mono'",fontSize:9,color:T.green,letterSpacing:1,marginBottom:8}}>⚡ {ms}ms response</div>}
+      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>
+        {quick.map(q=><button key={q} onClick={()=>send(q)} disabled={loading} style={{padding:"4px 10px",background:`${T.cyan}0e`,border:`1px solid ${T.cyan}22`,borderRadius:100,color:T.cyan,fontFamily:"'Space Mono'",fontSize:9,letterSpacing:1,cursor:"pointer",whiteSpace:"nowrap"}}>{q}</button>)}
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <input value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Type a customer question…" disabled={loading}
+          style={{flex:1,padding:"10px 14px",background:"rgba(255,255,255,0.04)",border:`1px solid ${T.cyan}22`,borderRadius:9,color:T.text,fontFamily:"'DM Sans'",fontSize:13,outline:"none"}}/>
+        <button onClick={()=>send()} disabled={loading}
+          style={{width:42,height:42,borderRadius:9,background:loading?`${T.cyan}33`:`linear-gradient(135deg,${T.cyan},${T.green})`,border:"none",cursor:"pointer",fontSize:16}}>
+          {loading?"⏳":"➤"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── 6. PAYMENT MODAL ── */
+function PayModal({ plan, price, onClose, onSuccess }) {
+  const [method, setMethod] = useState("gpay");
+  const [step, setStep] = useState("select");
+  const [progress, setProgress] = useState(0);
+  const [upiId, setUpiId] = useState("");
+
+  const methods = [
+    {id:"gpay",label:"Google Pay",icon:"🟢",desc:"Open GPay app"},
+    {id:"phonepe",label:"PhonePe",icon:"🟣",desc:"Open PhonePe"},
+    {id:"upi",label:"UPI ID",icon:"🏦",desc:"Any UPI app"},
+    {id:"call",label:"Call & Pay",icon:"📱",desc:"+91 7673962811"},
+  ];
+
+  const processPayment = async () => {
+    if (method==="call") { window.open(`tel:+${HUN}`); return; }
+    if (method==="gpay") { window.open(`upi://pay?pa=7673962811@okaxis&pn=AUTOMATA&am=${price}&cu=INR&tn=${plan}_Plan`); }
+    if (method==="phonepe") { window.open(`upi://pay?pa=7673962811@ybl&pn=AUTOMATA&am=${price}&cu=INR&tn=${plan}_Plan`); }
+    setStep("processing");
+    for (let i=0; i<=100; i+=5) {
+      await new Promise(r=>setTimeout(r,80));
+      setProgress(i);
+    }
+    setStep("done");
+    setTimeout(()=>onSuccess(plan),1200);
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.85)",backdropFilter:"blur(14px)",padding:20}}>
+      <div style={{width:"100%",maxWidth:440,background:T.panel,border:`1px solid ${T.cyan}33`,borderRadius:20,overflow:"hidden",boxShadow:`0 0 80px ${T.cyan}22`,animation:"popIn 0.3s ease"}}>
+        <div style={{padding:"20px 24px",borderBottom:"1px solid rgba(255,255,255,0.07)",display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,${T.cyan}08,transparent)`}}>
+          <div>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:20,letterSpacing:3}}>COMPLETE PAYMENT</div>
+            <div style={{fontSize:12,color:T.soft}}>{plan} Plan · ₹{price?.toLocaleString()}/month</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:T.soft,fontSize:20,cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{padding:"24px"}}>
+          {step==="select" && (
+            <>
+              <div style={{fontFamily:"'Space Mono'",fontSize:9,letterSpacing:3,color:T.muted,marginBottom:14}}>PAYMENT METHOD</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+                {methods.map(m=>(
+                  <button key={m.id} onClick={()=>setMethod(m.id)} style={{padding:"14px 12px",borderRadius:12,cursor:"pointer",textAlign:"left",background:method===m.id?`${T.cyan}18`:"rgba(255,255,255,0.03)",border:`1px solid ${method===m.id?T.cyan+"55":"rgba(255,255,255,0.08)"}`,transition:"all 0.2s"}}>
+                    <div style={{fontSize:22,marginBottom:6}}>{m.icon}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:method===m.id?T.cyan:T.text,marginBottom:2}}>{m.label}</div>
+                    <div style={{fontSize:11,color:T.muted}}>{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+              {method==="upi" && (
+                <div style={{marginBottom:16}}>
+                  <label style={{fontFamily:"'Space Mono'",fontSize:9,letterSpacing:2,color:T.muted,display:"block",marginBottom:8}}>YOUR UPI ID</label>
+                  <input value={upiId} onChange={e=>setUpiId(e.target.value)} placeholder="yourname@upi"
+                    style={{width:"100%",padding:"11px 14px",background:"rgba(255,255,255,0.04)",border:`1px solid ${T.cyan}22`,borderRadius:9,color:T.text,fontFamily:"'DM Sans'",fontSize:14,outline:"none"}}/>
+                </div>
+              )}
+              {method==="call" && (
+                <div style={{marginBottom:16,padding:"14px",background:`${T.orange}0a`,border:`1px solid ${T.orange}22`,borderRadius:10}}>
+                  <div style={{fontSize:13,color:T.soft,lineHeight:1.7}}>Call Hun directly:<br/><span style={{color:T.orange,fontFamily:"'Space Mono'",fontSize:14,letterSpacing:2}}>+91 7673962811</span></div>
+                </div>
+              )}
+              <div style={{padding:"12px 14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:10,display:"flex",justifyContent:"space-between",marginBottom:16}}>
+                <span style={{fontSize:13,color:T.soft}}>Total today</span>
+                <span style={{fontFamily:"'Bebas Neue'",fontSize:22,color:T.cyan}}>₹{price?.toLocaleString()}</span>
+              </div>
+              <Btn col={T.cyan} full onClick={()=>method==="call"?processPayment():setStep("confirm")}>
+                {method==="call"?"📱 CALL NOW":"REVIEW & PAY →"}
+              </Btn>
+              <div style={{textAlign:"center",marginTop:10,fontSize:11,color:T.muted}}>🔒 Secure · Refundable in 24hrs if not satisfied</div>
+            </>
+          )}
+          {step==="confirm" && (
+            <div>
+              <div style={{fontFamily:"'Space Mono'",fontSize:9,letterSpacing:3,color:T.muted,marginBottom:16}}>CONFIRM DETAILS</div>
+              {[["Plan",`${plan} — 5 AI Agents`],["Amount",`₹${price?.toLocaleString()}/month`],["Method",methods.find(m=>m.id===method)?.label],["Setup","48 hours"],["Support","+91 7673962811"]].map(([k,v])=>(
+                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,0.05)",fontSize:14}}>
+                  <span style={{color:T.soft}}>{k}</span>
+                  <span style={{color:T.text,fontWeight:600}}>{v}</span>
+                </div>
+              ))}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:20}}>
+                <Btn ghost col={T.cyan} full onClick={()=>setStep("select")}>← BACK</Btn>
+                <Btn col={T.green} full onClick={processPayment}>PAY NOW →</Btn>
+              </div>
+            </div>
+          )}
+          {step==="processing" && (
+            <div style={{textAlign:"center",padding:"30px 0"}}>
+              <div style={{fontSize:40,marginBottom:16,animation:"spinAnim 1s linear infinite"}}>⟳</div>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:22,letterSpacing:3,marginBottom:12}}>PROCESSING</div>
+              <div style={{height:6,background:"rgba(255,255,255,0.06)",borderRadius:3,marginBottom:14,overflow:"hidden"}}>
+                <div style={{height:"100%",width:`${progress}%`,background:`linear-gradient(90deg,${T.cyan},${T.green})`,borderRadius:3,transition:"width 0.08s linear"}}/>
+              </div>
+              <div style={{fontFamily:"'Space Mono'",fontSize:10,color:T.muted}}>{progress}% COMPLETE</div>
+            </div>
+          )}
+          {step==="done" && (
+            <div style={{textAlign:"center",padding:"20px 0"}}>
+              <div style={{fontSize:54,marginBottom:14}}>✅</div>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:26,letterSpacing:3,color:T.green,marginBottom:8}}>PAYMENT CONFIRMED!</div>
+              <div style={{fontSize:14,color:T.soft,lineHeight:1.7}}>Setting up your AI agents now.<br/>Live within 48 hours!</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── 7. ONBOARDING ── */
+function Onboard({ plan, onDone }) {
+  const [step, setStep] = useState(0);
+  const [biz, setBiz] = useState({name:"",type:"restaurant",phone:"",location:""});
+  const [launching, setLaunching] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [task, setTask] = useState("");
+  const set = (k,v) => setBiz(p=>({...p,[k]:v}));
+
+  const tasks = ["Configuring FAQ AI Agent…","Setting up Auto Booking…","Deploying Voice Agent…","Activating Instant Reply…","Enabling 24/7 Monitor…","Launching your dashboard…"];
+
+  const launch = async () => {
+    setLaunching(true);
+    for (let i=0; i<tasks.length; i++) {
+      setTask(tasks[i]);
+      for (let p=0; p<17; p++) {
+        await new Promise(r=>setTimeout(r,55));
+        setProgress(prev=>Math.min(prev+100/tasks.length/17,100));
+      }
+    }
+    setProgress(100);
+    await new Promise(r=>setTimeout(r,600));
+    onDone(biz);
+  };
+
+  if (launching) return (
+    <div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",zIndex:1}}>
+      <Particles/>
+      <div style={{textAlign:"center",maxWidth:400,position:"relative",zIndex:2}}>
+        <div style={{fontSize:56,marginBottom:22,animation:"floatAnim 1.2s ease-in-out infinite"}}>🤖</div>
+        <div style={{fontFamily:"'Bebas Neue'",fontSize:28,letterSpacing:3,marginBottom:8}}>DEPLOYING YOUR<br/><span style={{color:T.cyan}}>AI AGENTS</span></div>
+        <div style={{fontSize:13,color:T.soft,marginBottom:28}}>{task}</div>
+        <div style={{height:6,background:"rgba(255,255,255,0.06)",borderRadius:3,marginBottom:12,overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${progress}%`,background:`linear-gradient(90deg,${T.cyan},${T.green})`,borderRadius:3,transition:"width 0.06s linear",boxShadow:`0 0 12px ${T.cyan}88`}}/>
+        </div>
+        <div style={{fontFamily:"'Space Mono'",fontSize:11,color:T.cyan,letterSpacing:2}}>{Math.floor(progress)}% COMPLETE</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",zIndex:1}}>
+      <Particles/>
+      <div style={{width:"100%",maxWidth:520,position:"relative",zIndex:2,padding:"0 20px"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:24,letterSpacing:4,marginBottom:8}}>AUTO<span style={{color:T.cyan}}>MATA</span></div>
+          <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:4}}>
+            {[0,1].map(i=><div key={i} style={{width:i===step?26:7,height:7,borderRadius:4,background:i<=step?T.cyan:`${T.cyan}22`,transition:"all 0.4s ease"}}/>)}
+          </div>
+        </div>
+        <div style={{background:T.panel,border:`1px solid ${T.cyan}22`,borderRadius:20,padding:"32px 28px",boxShadow:`0 0 60px ${T.bg}`}}>
+          {step===0 && (
+            <div>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:22,letterSpacing:2,marginBottom:6}}>SET UP YOUR BUSINESS</div>
+              <div style={{fontSize:14,color:T.soft,marginBottom:22}}>Agents will be trained on your info</div>
+              <div style={{display:"flex",flexDirection:"column",gap:14,marginBottom:20}}>
+                {[["BUSINESS NAME","name","text","e.g. Spice Garden Restaurant"],["WHATSAPP","phone","tel","+91 98765 43210"],["LOCATION","location","text","e.g. Anna Nagar, Chennai"]].map(([l,k,t,ph])=>(
+                  <div key={k} style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <label style={{fontFamily:"'Space Mono'",fontSize:9,letterSpacing:2,color:T.muted}}>{l}</label>
+                    <input type={t} value={biz[k]} onChange={e=>set(k,e.target.value)} placeholder={ph}
+                      style={{padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:`1px solid ${T.cyan}22`,borderRadius:9,color:T.text,fontFamily:"'DM Sans'",fontSize:14,outline:"none"}}
+                      onFocus={e=>e.target.style.borderColor=T.cyan+"55"} onBlur={e=>e.target.style.borderColor=T.cyan+"22"}/>
+                  </div>
+                ))}
+                <div>
+                  <label style={{fontFamily:"'Space Mono'",fontSize:9,letterSpacing:2,color:T.muted,display:"block",marginBottom:8}}>BUSINESS TYPE</label>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {["Restaurant","Café","Guest House","Salon","Shop"].map(t=>(
+                      <button key={t} onClick={()=>set("type",t.toLowerCase())} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${biz.type===t.toLowerCase()?T.cyan+"55":"rgba(255,255,255,0.08)"}`,background:biz.type===t.toLowerCase()?`${T.cyan}18`:"transparent",color:biz.type===t.toLowerCase()?T.cyan:T.soft,fontFamily:"'Space Mono'",fontSize:10,cursor:"pointer",letterSpacing:1}}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <Btn col={T.cyan} full onClick={()=>setStep(1)} disabled={!biz.name||!biz.phone}>NEXT — REVIEW AGENTS →</Btn>
+            </div>
+          )}
+          {step===1 && (
+            <div>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:22,letterSpacing:2,marginBottom:6}}>AGENTS READY</div>
+              <div style={{fontSize:14,color:T.soft,marginBottom:20}}>Deploying for <b style={{color:T.text}}>{biz.name}</b></div>
+              <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:24}}>
+                {[["💬","FAQ AI Agent","Answers customer questions 24/7",T.cyan],["📅","Auto Booking","Handles all reservations automatically",T.green],["🎙️","Voice Agent","Picks up calls, books by voice",T.purple],["⚡","Instant Reply","0ms WhatsApp & Instagram replies",T.orange],["⏰","24/7 Monitor","All agents stay live round the clock",T.green]].map(([ico,name,desc,col])=>(
+                  <div key={name} style={{display:"flex",gap:12,alignItems:"center",padding:"12px 14px",background:T.cardHi,border:`1px solid ${col}22`,borderRadius:12}}>
+                    <div style={{width:36,height:36,borderRadius:9,background:`${col}18`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{ico}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontFamily:"'Bebas Neue'",fontSize:14,letterSpacing:1,marginBottom:2}}>{name}</div>
+                      <div style={{fontSize:12,color:T.soft}}>{desc}</div>
+                    </div>
+                    <Dot col={T.green}/>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <Btn ghost col={T.cyan} onClick={()=>setStep(0)}>← BACK</Btn>
+                <Btn col={T.green} onClick={launch} glow>🚀 LAUNCH</Btn>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── 8. DASHBOARD ── */
+function Dashboard({ biz, plan, onBack }) {
+  const [tab, setTab] = useState("overview");
+  const [clockTime, setClockTime] = useState("");
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voicePhase, setVoicePhase] = useState("idle");
+  const [voiceLog, setVoiceLog] = useState([]);
+  const [settings, setSettings] = useState({faq:true,booking:true,voice:true,instant:true,always:true});
+  const [bookings, setBookings] = useState([
+    {id:"AUTO-8821",name:"Rahul S.",svc:"Table for 4",time:"8:00 PM",date:"Today",status:"confirmed",ch:"📱"},
+    {id:"AUTO-8820",name:"Priya M.",svc:"Birthday Pkg",time:"7:30 PM",date:"Today",status:"confirmed",ch:"📸"},
+    {id:"AUTO-8819",name:"Arun K.",svc:"Lunch 2pax",time:"1:00 PM",date:"Tomorrow",status:"pending",ch:"🌐"},
+    {id:"AUTO-8818",name:"Sara L.",svc:"Table for 2",time:"8:30 PM",date:"Tomorrow",status:"confirmed",ch:"🎙️"},
+  ]);
+
+  useEffect(()=>{
+    const upd=()=>{const d=new Date();setClockTime(`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`);};
+    upd(); const id=setInterval(upd,1000); return()=>clearInterval(id);
+  },[]);
+
+  const addBooking = () => {
+    const names=["Deepa N.","Kumar R.","Anita S.","Vijay P."];
+    const svcs=["Table for 2","Family Dinner","Quick Lunch","Table for 6"];
+    const nb={id:"AUTO-"+Math.floor(Math.random()*90000+10000),name:names[Math.floor(Math.random()*4)],svc:svcs[Math.floor(Math.random()*4)],time:`${6+Math.floor(Math.random()*4)}:00 PM`,date:"Today",status:"confirmed",ch:"📱",isNew:true};
+    setBookings(p=>[nb,...p]);
+    setTimeout(()=>setBookings(p=>p.map(b=>b.id===nb.id?{...b,isNew:false}:b)),3000);
+  };
+
+  const startVoice = () => {
+    if(voiceActive)return;
+    setVoiceActive(true);setVoicePhase("live");setVoiceLog([]);
+    const demo=[
+      {role:"caller",text:"Hi! Can I book a table for 4 tonight at 7 PM?"},
+      {role:"ai",text:`Hello! Welcome to ${biz.name||"our restaurant"}. Table for 4 at 7 PM — I'm checking availability...`},
+      {role:"caller",text:"Yes it's for a birthday dinner."},
+      {role:"ai",text:"Perfect! Table for 4 at 7 PM for a birthday dinner is confirmed. Name and number please?"},
+      {role:"caller",text:"Kumar, 98765 43210."},
+      {role:"ai",text:"Done Kumar! WhatsApp confirmation sent. We look forward to your celebration! 🎉"},
+    ];
+    demo.forEach((l,i)=>setTimeout(()=>{
+      setVoiceLog(p=>[...p,l]);
+      if(i===demo.length-1)setTimeout(()=>{setVoicePhase("done");setVoiceActive(false);},1500);
+    },i*2100));
+  };
+
+  const tabs=[
+    {id:"overview",icon:"⬡",label:"Overview"},
+    {id:"chat",icon:"💬",label:"FAQ Agent"},
+    {id:"bookings",icon:"📅",label:"Bookings"},
+    {id:"voice",icon:"🎙️",label:"Voice AI"},
+    {id:"analytics",icon:"📊",label:"Analytics"},
+    {id:"settings",icon:"⚙️",label:"Settings"},
+  ];
+
+  const agents=[
+    {icon:"💬",name:"FAQ AI AGENT",desc:"Answering questions",col:T.cyan,msgs:247,today:38},
+    {icon:"📅",name:"BOOKING AGENT",desc:"Managing reservations",col:T.green,msgs:143,today:12},
+    {icon:"🎙️",name:"VOICE AI AGENT",desc:"Handling phone calls",col:T.purple,msgs:89,today:7},
+    {icon:"⚡",name:"INSTANT REPLY",desc:"0ms WhatsApp replies",col:T.orange,msgs:1423,today:184},
+    {icon:"⏰",name:"24/7 MONITOR",desc:"All systems live",col:T.green,msgs:null,today:null},
+  ];
+
+  const statusCol={confirmed:T.green,pending:T.orange,cancelled:T.pink};
+
+  return (
+    <div style={{display:"flex",height:"100vh",background:T.bg,fontFamily:"'DM Sans',sans-serif",color:T.text,overflow:"hidden"}}>
+      {/* Sidebar */}
+      <div style={{width:220,background:T.deep,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",flexShrink:0}}>
+        <div style={{padding:"22px 20px 14px"}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:22,letterSpacing:4,marginBottom:3}}>AUTO<span style={{color:T.cyan}}>MATA</span></div>
+          <div style={{fontFamily:"'Space Mono'",fontSize:7,color:T.muted,letterSpacing:2}}>AI PLATFORM v2</div>
+        </div>
+        <div style={{margin:"0 14px 16px",padding:"12px 14px",background:`linear-gradient(135deg,${T.cyan}14,${T.green}0a)`,border:`1px solid ${T.cyan}22`,borderRadius:12}}>
+          <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>{biz.name||"Your Business"}</div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <Dot col={T.green}/>
+            <span style={{fontFamily:"'Space Mono'",fontSize:8,color:T.green,letterSpacing:1}}>{(plan||"PRO").toUpperCase()} · ACTIVE</span>
+          </div>
+        </div>
+        <nav style={{flex:1,padding:"0 10px",overflowY:"auto"}}>
+          {tabs.map(({id,icon,label})=>(
+            <button key={id} onClick={()=>setTab(id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,background:tab===id?`${T.cyan}18`:"transparent",border:`1px solid ${tab===id?T.cyan+"33":"transparent"}`,color:tab===id?T.cyan:T.soft,fontFamily:"'DM Sans'",fontSize:14,fontWeight:tab===id?600:400,cursor:"pointer",textAlign:"left",marginBottom:3,transition:"all 0.2s",boxShadow:tab===id?`0 0 18px ${T.cyan}14`:"none"}}>
+              <span style={{fontSize:16}}>{icon}</span>{label}
+              {tab===id&&<div style={{marginLeft:"auto",width:4,height:4,borderRadius:"50%",background:T.cyan}}/>}
+            </button>
+          ))}
+        </nav>
+        <div style={{padding:"14px 18px",borderTop:`1px solid ${T.border}`}}>
+          <div style={{fontFamily:"'Space Mono'",fontSize:8,color:T.muted,letterSpacing:1,marginBottom:5}}>LIVE</div>
+          <div style={{fontFamily:"'Space Mono'",fontSize:14,color:T.cyan,letterSpacing:2,marginBottom:12}}>{clockTime}</div>
+          <button onClick={onBack} style={{width:"100%",padding:"9px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:9,color:T.soft,fontFamily:"'Space Mono'",fontSize:9,letterSpacing:1,cursor:"pointer"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=T.cyan+"44"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(255,255,255,0.07)"}
+          >← HOME</button>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div style={{flex:1,overflowY:"auto",padding:"28px 30px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:26}}>
+          <div>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:26,letterSpacing:3}}>
+              {{overview:"AGENT OVERVIEW",chat:"FAQ AI AGENT",bookings:"BOOKING MANAGER",voice:"VOICE AI AGENT",analytics:"ANALYTICS",settings:"SETTINGS"}[tab]}
+            </div>
+            <div style={{fontSize:13,color:T.soft,marginTop:2}}>
+              {{overview:"All 5 agents running live 24/7",chat:"Live AI — Claude powered, instant replies",bookings:"Auto-confirmed by AI agents",voice:"AI phone agent — handles every call",analytics:"Real-time performance",settings:"Configure your agents"}[tab]}
+            </div>
+          </div>
+          <div style={{padding:"8px 14px",background:`${T.green}12`,border:`1px solid ${T.green}22`,borderRadius:100,display:"flex",alignItems:"center",gap:6}}>
+            <Dot col={T.green}/>
+            <span style={{fontFamily:"'Space Mono'",fontSize:9,color:T.green,letterSpacing:1}}>ALL AGENTS LIVE</span>
+          </div>
+        </div>
+
+        {/* OVERVIEW */}
+        {tab==="overview" && (
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:22}}>
+              {[{l:"Messages",v:"2,847",s:"this month",c:T.cyan},{l:"Bookings",v:"143",s:"auto-confirmed",c:T.green},{l:"Calls",v:"89",s:"voice agent",c:T.purple},{l:"Response",v:"0ms",s:"avg delay",c:T.orange}].map(({l,v,s,c})=>(
+                <div key={l} style={{background:T.card,border:`1px solid ${c}18`,borderRadius:14,padding:"18px 16px",boxShadow:"inset 0 1px 0 rgba(255,255,255,0.05)"}}>
+                  <div style={{fontFamily:"'Bebas Neue'",fontSize:36,color:c,lineHeight:1,marginBottom:6}}>{v}</div>
+                  <div style={{fontSize:13,fontWeight:600}}>{l}</div>
+                  <div style={{fontSize:12,color:T.soft,marginTop:3}}>{s}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{fontFamily:"'Space Mono'",fontSize:9,letterSpacing:3,color:T.cyan,marginBottom:14}}>// YOUR 5 AI AGENTS</div>
+            {agents.map((a,i)=>(
+              <div key={a.icon} style={{display:"flex",alignItems:"center",gap:16,padding:"16px 20px",background:T.card,border:`1px solid ${a.col}14`,borderRadius:14,marginBottom:10,boxShadow:"inset 0 1px 0 rgba(255,255,255,0.04)"}}>
+                <div style={{width:44,height:44,borderRadius:12,background:`${a.col}18`,border:`1px solid ${a.col}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{a.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:4}}>
+                    <span style={{fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2}}>{a.name}</span>
+                    <StatusPill status="running"/>
+                  </div>
+                  <div style={{fontSize:13,color:T.soft}}>{a.desc}</div>
+                </div>
+                {a.msgs&&<div style={{textAlign:"right"}}>
+                  <div style={{fontFamily:"'Bebas Neue'",fontSize:26,color:a.col,lineHeight:1}}>{a.msgs}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{a.today} today</div>
+                </div>}
+                <div style={{display:"flex",alignItems:"flex-end",gap:2,height:28}}>
+                  {Array.from({length:8},()=>Math.random()*24+4).map((h,i)=><div key={i} style={{width:3,height:h,background:`${a.col}44`,borderRadius:2}}/>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* CHAT */}
+        {tab==="chat" && (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:20,height:"calc(100vh-180px)"}}>
+            <div style={{background:T.card,border:`1px solid ${T.cyan}22`,borderRadius:16,padding:"20px",display:"flex",flexDirection:"column",height:520}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px solid ${T.border}`}}>
+                <div style={{width:36,height:36,borderRadius:"50%",background:`linear-gradient(135deg,${T.cyan}44,${T.green}33)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🤖</div>
+                <div>
+                  <div style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:2}}>{biz.name||"Your Business"} — AI</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}><Dot col={T.green}/><span style={{fontFamily:"'Space Mono'",fontSize:8,color:T.green}}>LIVE · 24/7 · 0ms</span></div>
+                </div>
+                <Clock/>
+              </div>
+              <div style={{flex:1,overflow:"hidden"}}>
+                <AIChat bizName={biz.name}/>
+              </div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+              <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:"18px 16px"}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:2,marginBottom:14}}>TODAY</div>
+                {[["Replied","184",T.cyan],["Speed","0ms",T.green],["Resolved","97%",T.green],["Escalated","3%",T.orange]].map(([l,v,c])=>(
+                  <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",fontSize:13}}>
+                    <span style={{color:T.soft}}>{l}</span>
+                    <span style={{fontFamily:"'Space Mono'",color:c}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* BOOKINGS */}
+        {tab==="bookings" && (
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:22}}>
+              {[["Today","12",T.cyan],["Week","67",T.green],["Rate","94%",T.green],["Avg","4.2h",T.orange]].map(([l,v,c])=>(
+                <div key={l} style={{background:T.card,border:`1px solid ${c}14`,borderRadius:12,padding:"16px"}}>
+                  <div style={{fontFamily:"'Bebas Neue'",fontSize:32,color:c,lineHeight:1}}>{v}</div>
+                  <div style={{fontSize:12,color:T.soft,marginTop:4}}>{l}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:"22px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2}}>LIVE FEED</div>
+                <button onClick={addBooking} style={{padding:"8px 14px",background:`${T.green}18`,border:`1px solid ${T.green}33`,borderRadius:8,color:T.green,fontFamily:"'Space Mono'",fontSize:9,letterSpacing:1,cursor:"pointer"}}>+ SIMULATE</button>
+              </div>
+              {bookings.map((b)=>(
+                <div key={b.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:b.isNew?`${T.green}0d`:T.cardHi,border:`1px solid ${b.isNew?T.green+"44":"rgba(255,255,255,0.05)"}`,borderRadius:10,marginBottom:8,transition:"all 0.4s"}}>
+                  <div style={{fontSize:18}}>{b.ch}</div>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:2}}>
+                      <span style={{fontWeight:600,fontSize:13}}>{b.name}</span>
+                      {b.isNew&&<span style={{fontFamily:"'Space Mono'",fontSize:7,color:T.green,background:`${T.green}18`,padding:"2px 7px",borderRadius:100}}>NEW ✓</span>}
+                    </div>
+                    <div style={{fontSize:12,color:T.soft}}>{b.svc} · {b.time} · {b.date}</div>
+                  </div>
+                  <div style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",background:`${statusCol[b.status]}14`,border:`1px solid ${statusCol[b.status]}33`,borderRadius:100}}>
+                    <div style={{width:4,height:4,borderRadius:"50%",background:statusCol[b.status]}}/>
+                    <span style={{fontFamily:"'Space Mono'",fontSize:7,color:statusCol[b.status],letterSpacing:1}}>{b.status.toUpperCase()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* VOICE */}
+        {tab==="voice" && (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:20}}>
+            <div style={{background:T.card,border:`1px solid ${T.purple}22`,borderRadius:16,padding:"24px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+                <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                  <div style={{width:44,height:44,borderRadius:12,background:`${T.purple}22`,border:`1px solid ${T.purple}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🎙️</div>
+                  <div>
+                    <div style={{fontFamily:"'Bebas Neue'",fontSize:20,letterSpacing:2}}>VOICE AI AGENT</div>
+                    <div style={{fontSize:12,color:T.soft}}>Handles every call automatically</div>
+                  </div>
+                </div>
+                <div style={{fontFamily:"'Space Mono'",fontSize:9,color:{idle:T.muted,live:T.green,done:T.cyan}[voicePhase]}}>
+                  {{idle:"● READY",live:"● LIVE CALL",done:"✓ ENDED"}[voicePhase]}
+                </div>
+              </div>
+              <div style={{background:"rgba(0,0,0,0.3)",borderRadius:12,padding:"16px",marginBottom:16,display:"flex",justifyContent:"center"}}>
+                <Wave active={voiceActive} col={T.purple}/>
+              </div>
+              <div style={{background:"rgba(0,0,0,0.2)",borderRadius:12,padding:14,minHeight:180,maxHeight:240,overflowY:"auto",marginBottom:14,display:"flex",flexDirection:"column",gap:9}}>
+                {voiceLog.length===0&&<div style={{color:T.muted,fontSize:13,textAlign:"center",paddingTop:32}}>Click Simulate — watch the AI handle a real reservation call</div>}
+                {voiceLog.map((l,i)=>(
+                  <div key={i} style={{display:"flex",gap:10}}>
+                    <div style={{minWidth:50,fontFamily:"'Space Mono'",fontSize:8,color:l.role==="ai"?T.purple:T.cyan,paddingTop:3,flexShrink:0}}>{l.role==="ai"?"AI":"CALLER"}</div>
+                    <div style={{fontSize:13.5,color:l.role==="ai"?"#c4b5f8":T.soft,background:l.role==="ai"?`${T.purple}0d`:"rgba(255,255,255,0.03)",padding:"8px 12px",borderRadius:8,flex:1,lineHeight:1.6}}>{l.text}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <Btn col={T.purple} onClick={startVoice} disabled={voiceActive}>{voiceActive?"⏳ LIVE...":"▶ SIMULATE"}</Btn>
+                <Btn col={T.purple} ghost onClick={()=>{setVoiceActive(false);setVoicePhase("idle");setVoiceLog([]);}}>↺ RESET</Btn>
+              </div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {[["Calls/month","89",T.purple],["Via calls booked","34",T.green],["Avg duration","2m 18s",T.cyan],["Missed calls","0",T.green]].map(([l,v,c])=>(
+                <div key={l} style={{background:T.card,border:`1px solid ${c}14`,borderRadius:12,padding:"16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:13,color:T.soft}}>{l}</span>
+                  <span style={{fontFamily:"'Bebas Neue'",fontSize:26,color:c,lineHeight:1}}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ANALYTICS */}
+        {tab==="analytics" && (
+          <div style={{display:"flex",flexDirection:"column",gap:18}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+              {[{l:"Messages",v:2847,c:T.cyan,i:"💬"},{l:"Bookings",v:143,c:T.green,i:"📅"},{l:"Calls",v:89,c:T.purple,i:"🎙️"}].map(({l,v,c,i})=>(
+                <div key={l} style={{background:T.card,border:`1px solid ${c}22`,borderRadius:14,padding:"20px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+                    <span style={{fontSize:22}}>{i}</span>
+                    <span style={{fontFamily:"'Space Mono'",fontSize:9,color:c}}>+12% ↑</span>
+                  </div>
+                  <div style={{fontFamily:"'Bebas Neue'",fontSize:44,color:c,lineHeight:1}}>{v.toLocaleString()}</div>
+                  <div style={{fontSize:13,color:T.soft,marginTop:4}}>{l} this month</div>
+                </div>
+              ))}
+            </div>
+            <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:"22px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2}}>AI ACTIVITY · LAST 14 DAYS</div>
+                <div style={{fontFamily:"'Space Mono'",fontSize:9,color:T.green}}>ALL AUTO ✓</div>
+              </div>
+              <div style={{display:"flex",alignItems:"flex-end",gap:5,height:88}}>
+                {[44,62,38,85,58,72,94,48,78,90,65,82,55,98].map((h,i)=>(
+                  <div key={i} style={{flex:1,height:h*.88,background:`linear-gradient(to top,${T.cyan}aa,${T.cyan}22)`,borderRadius:"3px 3px 0 0"}}/>
+                ))}
+              </div>
+              <div style={{display:"flex",marginTop:6}}>
+                {["10","11","12","13","14","15","16","17","18","19","20","21","22","23"].map(d=><div key={d} style={{flex:1,textAlign:"center",fontFamily:"'Space Mono'",fontSize:7,color:T.muted}}>{d}</div>)}
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+              {[["Satisfaction",98,T.green],["Uptime",99.99,T.cyan]].map(([l,v,c])=>(
+                <div key={l} style={{background:T.card,border:`1px solid ${c}22`,borderRadius:14,padding:"20px"}}>
+                  <div style={{fontSize:13,color:T.soft,marginBottom:8}}>{l}</div>
+                  <div style={{fontFamily:"'Bebas Neue'",fontSize:48,color:c,lineHeight:1,marginBottom:12}}>{v}%</div>
+                  <div style={{height:6,background:"rgba(255,255,255,0.06)",borderRadius:3}}>
+                    <div style={{width:`${v}%`,height:"100%",background:`linear-gradient(90deg,${c},${T.cyan})`,borderRadius:3}}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* SETTINGS */}
+        {tab==="settings" && (
+          <div style={{maxWidth:680,display:"flex",flexDirection:"column",gap:18}}>
+            <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:"24px"}}>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:18,letterSpacing:2,marginBottom:18}}>AGENT CONTROLS</div>
+              {[["FAQ AI Agent","faq",T.cyan],["Auto Booking","booking",T.green],["Voice Agent","voice",T.purple],["Instant Reply","instant",T.orange],["24/7 Mode","always",T.green]].map(([l,k,c])=>(
+                <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+                  <div style={{fontSize:14,color:T.text}}>{l}</div>
+                  <div onClick={()=>setSettings(p=>({...p,[k]:!p[k]}))} style={{width:48,height:26,borderRadius:13,background:settings[k]?`linear-gradient(135deg,${c},${c}88)`:"rgba(255,255,255,0.08)",cursor:"pointer",position:"relative",transition:"all 0.3s",boxShadow:settings[k]?`0 0 16px ${c}44`:"none"}}>
+                    <div style={{position:"absolute",width:20,height:20,borderRadius:"50%",background:"#fff",top:3,left:settings[k]?25:3,transition:"left 0.3s"}}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Btn col={T.cyan} onClick={()=>alert("✅ Settings saved!")}>SAVE CHANGES</Btn>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── 9. SNAP SCROLL SECTIONS ── */
+
+function SectionHero({ onScroll }) {
+  const [ref, v] = useReveal(0.05);
+  return (
+    <section id="hero" style={{ minHeight:"100vh", scrollSnapAlign:"start", scrollSnapStop:"always", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"80px 6% 60px", position:"relative", zIndex:1, textAlign:"center", overflow:"hidden" }}>
+      <div style={{ position:"absolute", inset:0, background:`radial-gradient(ellipse 60% 50% at 50% 40%,${T.cyan}0c,transparent)`, pointerEvents:"none" }}/>
+      <div ref={ref}>
+        <div style={{ ...animSw(v,0), display:"inline-flex", alignItems:"center", gap:8, padding:"9px 18px", border:`1px solid ${T.cyan}33`, borderRadius:100, marginBottom:28, background:`${T.cyan}0a`, backdropFilter:"blur(8px)" }}>
+          <Dot col={T.green}/>
+          <span style={{ fontFamily:"'Space Mono'", fontSize:10, letterSpacing:2, color:T.green }}>5 AI AGENTS · LIVE IN 48 HOURS</span>
+        </div>
+        <h1 style={{ ...animSw(v,80), fontFamily:"'Bebas Neue'", lineHeight:.87, letterSpacing:4, fontSize:"clamp(50px,9vw,110px)", marginBottom:26 }}>
+          <span style={{ display:"block", background:`linear-gradient(135deg,#fff,${T.soft}77)`, WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>AI AGENTS THAT</span>
+          <span style={{ display:"block", color:T.cyan, textShadow:`0 0 60px ${T.cyan}55` }}>WORK FOR YOU</span>
+          <span style={{ display:"block", background:`linear-gradient(135deg,#fff,${T.soft}77)`, WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>24 / 7 ALWAYS</span>
+        </h1>
+        <p style={{ ...animSw(v,160), fontSize:18, color:T.soft, lineHeight:1.75, maxWidth:540, margin:"0 auto 42px" }}>
+          Buy once. Agents deploy in 48 hours. They handle every booking, FAQ, call, and reply — forever.
+        </p>
+        <div style={{ ...animSw(v,240), display:"flex", gap:14, justifyContent:"center", flexWrap:"wrap", marginBottom:48 }}>
+          <Btn col={T.cyan} glow onClick={()=>onScroll("pricing")}>🚀 GET MY AI AGENTS</Btn>
+          <Btn col={T.cyan} ghost onClick={()=>onScroll("demo")}>SEE LIVE DEMO ↓</Btn>
+        </div>
+        <div style={{ ...animSw(v,320), display:"flex", gap:36, justifyContent:"center", flexWrap:"wrap" }}>
+          {[["500+","Businesses",T.cyan],["2.8k+","Msgs/month",T.green],["0ms","Response",T.orange],["99.99%","Uptime",T.green]].map(([v2,l,c])=>(
+            <div key={l} style={{ textAlign:"center" }}>
+              <div style={{ fontFamily:"'Bebas Neue'", fontSize:30, color:c, lineHeight:1 }}>{v2}</div>
+              <div style={{ fontSize:11, color:T.muted, letterSpacing:1 }}>{l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ position:"absolute", right:"6%", top:"50%", transform:"translateY(-50%)", width:270, height:270, display:"flex", alignItems:"center", justifyContent:"center", animation:"floatAnim 7s ease-in-out infinite" }}>
+        {[270,202,140].map((sz,i)=><div key={sz} style={{ position:"absolute", width:sz, height:sz, border:`1px solid ${[T.cyan,T.green,T.orange][i]}18`, borderRadius:"50%", animation:`spinRing ${[12,8,15][i]}s linear infinite` }}/>)}
+        <SpinCube s={88}/>
+      </div>
+      <div style={{ position:"absolute", bottom:26, left:"50%", transform:"translateX(-50%)", display:"flex", flexDirection:"column", alignItems:"center", gap:5, opacity:.35, animation:"floatAnim 2s ease-in-out infinite" }}>
+        <div style={{ fontFamily:"'Space Mono'", fontSize:9, letterSpacing:4, color:T.muted }}>SCROLL</div>
+        <div style={{ fontSize:16, color:T.cyan }}>⌄</div>
+      </div>
+    </section>
+  );
+}
+
+function SectionAgents() {
+  const [ref, v] = useReveal(0.1);
+  const isShown = useStagger(5, v, 90);
+  const agents = [
+    {icon:"💬",title:"FAQ AGENT",desc:"Answers every question in under 1 second",col:T.cyan,stat:"0ms"},
+    {icon:"📅",title:"AUTO BOOKING",desc:"Takes reservations 24/7, auto-confirms",col:T.green,stat:"∞ bookings"},
+    {icon:"🎙️",title:"VOICE AGENT",desc:"Picks up calls, talks, books by voice",col:T.purple,stat:"Never misses"},
+    {icon:"⚡",title:"INSTANT REPLY",desc:"0-delay WhatsApp & Instagram replies",col:T.orange,stat:"0ms delay"},
+    {icon:"⏰",title:"24/7 MONITOR",desc:"All agents alive round the clock forever",col:T.green,stat:"99.99% up"},
+  ];
+  return (
+    <section id="agents" style={{ minHeight:"100vh", scrollSnapAlign:"start", scrollSnapStop:"always", display:"flex", flexDirection:"column", justifyContent:"center", padding:"80px 6%", position:"relative", zIndex:1 }}>
+      <div ref={ref}>
+        <div style={{ textAlign:"center", marginBottom:48 }}>
+          <div style={{ ...animSw(v,0) }}><Tag>// 5 AI AGENTS IN EVERY PLAN</Tag></div>
+          <div style={{ ...animSw(v,80), fontFamily:"'Bebas Neue'", fontSize:"clamp(34px,5.5vw,62px)", letterSpacing:3 }}>
+            ONE PLATFORM.<br/><span style={{color:T.cyan}}>FIVE AGENTS. INFINITE SCALE.</span>
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14 }}>
+          {agents.map((a,i)=>{
+            const [h,setH]=useState(false);
+            return (
+              <div key={i} style={{ opacity:isShown(i)?1:0, transform:isShown(i)?(h?"translateY(-6px)":"none"):"translateY(38px)", background:h?T.cardHi:T.card, border:`1px solid ${h?a.col+"55":T.border}`, borderRadius:16, padding:"26px 18px", textAlign:"center", boxShadow:h?`0 16px 48px ${a.col}22,inset 0 1px 0 rgba(255,255,255,0.08)`:"inset 0 1px 0 rgba(255,255,255,0.04)", transition:"all 0.45s cubic-bezier(0.34,1.56,0.64,1)", cursor:"default" }}
+                onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}
+              >
+                <div style={{fontSize:32,marginBottom:12}}>{a.icon}</div>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:2,marginBottom:9}}>{a.title}</div>
+                <div style={{fontSize:12.5,color:T.soft,lineHeight:1.65,marginBottom:14}}>{a.desc}</div>
+                <div style={{fontFamily:"'Space Mono'",fontSize:9,color:a.col,padding:"5px 12px",background:`${a.col}15`,border:`1px solid ${a.col}33`,borderRadius:100,display:"inline-block"}}>{a.stat}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SectionDemo() {
+  const [ref, v] = useReveal(0.1);
+  const [tab, setTab] = useState("faq");
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voicePhase, setVoicePhase] = useState("idle");
+  const [voiceLog, setVoiceLog] = useState([]);
+
+  const startVoice = () => {
+    if(voiceActive)return;
+    setVoiceActive(true);setVoicePhase("live");setVoiceLog([]);
+    const demo=[
+      {role:"caller",text:"Hi, can I book a table for 4 tonight at 7?"},
+      {role:"ai",text:"Of course! Table for 4 at 7 PM tonight. May I have your name?"},
+      {role:"caller",text:"It's Rahul, 98765 43210."},
+      {role:"ai",text:"Done Rahul! Table for 4 at 7 PM confirmed. WhatsApp receipt sent! 🎉"},
+    ];
+    demo.forEach((l,i)=>setTimeout(()=>{
+      setVoiceLog(p=>[...p,l]);
+      if(i===demo.length-1)setTimeout(()=>{setVoicePhase("done");setVoiceActive(false);},1500);
+    },i*2000));
+  };
+
+  return (
+    <section id="demo" style={{ minHeight:"100vh", scrollSnapAlign:"start", scrollSnapStop:"always", display:"flex", flexDirection:"column", justifyContent:"center", padding:"80px 6%", position:"relative", zIndex:1 }}>
+      <div ref={ref}>
+        <div style={{ ...animSw(v,0), textAlign:"center", marginBottom:36 }}>
+          <Tag col={T.green}>// TRY THE LIVE SYSTEM</Tag>
+          <div style={{ fontFamily:"'Bebas Neue'", fontSize:"clamp(32px,5vw,58px)", letterSpacing:3 }}>
+            REAL AGENTS.<br/><span style={{color:T.green}}>TEST THEM NOW.</span>
+          </div>
+        </div>
+        <div style={{ ...animSw(v,100), display:"flex", justifyContent:"center", gap:10, marginBottom:26, flexWrap:"wrap" }}>
+          {[["faq","💬 FAQ Chat",T.cyan],["booking","📅 Booking Feed",T.green],["voice","🎙️ Voice AI",T.purple]].map(([k,l,c])=>(
+            <button key={k} onClick={()=>setTab(k)} style={{ padding:"10px 22px", borderRadius:100, cursor:"pointer", background:tab===k?`${c}22`:"transparent", border:`1px solid ${tab===k?c+"55":"rgba(255,255,255,0.1)"}`, color:tab===k?c:T.soft, fontFamily:"'Space Mono'", fontSize:11, letterSpacing:2, transition:"all 0.25s", boxShadow:tab===k?`0 0 20px ${c}33`:"none" }}>{l}</button>
+          ))}
+        </div>
+        <div style={{ ...animSw(v,180), maxWidth:760, margin:"0 auto" }}>
+          {tab==="faq" && (
+            <div style={{ background:T.card, border:`1px solid ${T.cyan}22`, borderRadius:18, padding:24, height:440, display:"flex", flexDirection:"column" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, paddingBottom:12, borderBottom:`1px solid ${T.border}` }}>
+                <div style={{ width:34,height:34,borderRadius:"50%",background:`linear-gradient(135deg,${T.cyan}44,${T.green}33)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16 }}>🤖</div>
+                <div>
+                  <div style={{fontFamily:"'Bebas Neue'",fontSize:14,letterSpacing:2}}>LIVE AI AGENT DEMO</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}><Dot col={T.green}/><span style={{fontFamily:"'Space Mono'",fontSize:8,color:T.green}}>CLAUDE AI · 0ms</span></div>
+                </div>
+                <Clock/>
+              </div>
+              <div style={{flex:1,overflow:"hidden"}}>
+                <AIChat bizName="Spice Garden Restaurant"/>
+              </div>
+            </div>
+          )}
+          {tab==="booking" && (
+            <div style={{ background:T.card, border:`1px solid ${T.green}22`, borderRadius:18, padding:24 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:18,letterSpacing:2}}>AI BOOKING FEED</div>
+                <div style={{fontFamily:"'Space Mono'",fontSize:9,color:T.green}}>ALL AUTO-CONFIRMED ✓</div>
+              </div>
+              {[{name:"Rahul S.",s:"Table for 4 · 8 PM Today",ch:"📱",status:"confirmed"},{name:"Priya M.",s:"Birthday Pkg · 7:30 PM",ch:"📸",status:"confirmed"},{name:"Arun K.",s:"Lunch 2pax · 1 PM",ch:"🌐",status:"pending"},{name:"Sara L.",s:"Table for 2 · 8:30 PM",ch:"🎙️",status:"confirmed"}].map((b,i)=>(
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", background:T.cardHi, border:"1px solid rgba(255,255,255,0.05)", borderRadius:10, marginBottom:8 }}>
+                  <div style={{fontSize:18}}>{b.ch}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:13}}>{b.name}</div>
+                    <div style={{fontSize:12,color:T.soft}}>{b.s}</div>
+                  </div>
+                  <div style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 9px", background:b.status==="confirmed"?`${T.green}14`:`${T.orange}14`, border:`1px solid ${b.status==="confirmed"?T.green:T.orange}33`, borderRadius:100 }}>
+                    <div style={{width:4,height:4,borderRadius:"50%",background:b.status==="confirmed"?T.green:T.orange}}/>
+                    <span style={{fontFamily:"'Space Mono'",fontSize:7,color:b.status==="confirmed"?T.green:T.orange,letterSpacing:1}}>{b.status.toUpperCase()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {tab==="voice" && (
+            <div style={{ background:T.card, border:`1px solid ${T.purple}22`, borderRadius:18, padding:24 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:18,letterSpacing:2}}>🎙️ VOICE AI AGENT</div>
+                <div style={{fontFamily:"'Space Mono'",fontSize:9,color:{idle:T.muted,live:T.green,done:T.cyan}[voicePhase]}}> {{idle:"● READY",live:"● LIVE",done:"✓ DONE"}[voicePhase]}</div>
+              </div>
+              <div style={{background:"rgba(0,0,0,0.3)",borderRadius:10,padding:"14px",marginBottom:14,display:"flex",justifyContent:"center"}}>
+                <Wave active={voiceActive} col={T.purple}/>
+              </div>
+              <div style={{background:"rgba(0,0,0,0.2)",borderRadius:10,padding:14,minHeight:130,marginBottom:14,display:"flex",flexDirection:"column",gap:8}}>
+                {voiceLog.length===0&&<div style={{color:T.muted,fontSize:13,textAlign:"center",paddingTop:28}}>Press Simulate to watch AI handle a real booking call</div>}
+                {voiceLog.map((l,i)=>(
+                  <div key={i} style={{display:"flex",gap:10}}>
+                    <div style={{minWidth:50,fontFamily:"'Space Mono'",fontSize:8,color:l.role==="ai"?T.purple:T.cyan,paddingTop:3}}>{l.role==="ai"?"AI":"CALLER"}</div>
+                    <div style={{fontSize:13.5,color:l.role==="ai"?"#c4b5f8":T.soft,background:l.role==="ai"?`${T.purple}0d`:"rgba(255,255,255,0.03)",padding:"8px 12px",borderRadius:8,flex:1,lineHeight:1.6}}>{l.text}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <Btn col={T.purple} onClick={startVoice} disabled={voiceActive}>{voiceActive?"⏳ LIVE...":"▶ SIMULATE"}</Btn>
+                <Btn col={T.purple} ghost onClick={()=>{setVoiceActive(false);setVoicePhase("idle");setVoiceLog([]);}}>↺ RESET</Btn>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SectionPricing({ onBuy }) {
+  const [ref, v] = useReveal(0.1);
+  const isShown = useStagger(3, v, 110);
+  const plans = [
+    {name:"STARTER",price:3000,col:T.cyan,hot:false,features:["FAQ AI Agent","Auto Booking (10/mo)","WhatsApp Bot","Analytics","Email Support"]},
+    {name:"PRO",price:5000,col:T.green,hot:true,features:["Everything in Starter","Voice AI Agent","Unlimited Bookings","3 Platforms","Priority Support","Monthly Report"]},
+    {name:"ENTERPRISE",price:null,col:T.orange,hot:false,features:["Multi-Location","Dedicated Engineer","Unlimited Everything","White-label","Full API"]},
+  ];
+  return (
+    <section id="pricing" style={{ minHeight:"100vh", scrollSnapAlign:"start", scrollSnapStop:"always", display:"flex", flexDirection:"column", justifyContent:"center", padding:"80px 6%", position:"relative", zIndex:1 }}>
+      <div ref={ref}>
+        <div style={{ textAlign:"center", marginBottom:48 }}>
+          <div style={{...animSw(v,0)}}><Tag col={T.orange}>// BUY YOUR AI AGENTS</Tag></div>
+          <div style={{ ...animSw(v,80), fontFamily:"'Bebas Neue'", fontSize:"clamp(32px,5vw,58px)", letterSpacing:3 }}>
+            BUY TODAY.<br/><span style={{color:T.orange}}>LIVE IN 48 HOURS.</span>
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:22, maxWidth:980, margin:"0 auto" }}>
+          {plans.map((p,i)=>{
+            const [h,setH]=useState(false);
+            return (
+              <div key={i} style={{ opacity:isShown(i)?1:0, transform:isShown(i)?(h?"translateY(-6px)":"none"):"translateY(38px)", background:p.hot?`linear-gradient(160deg,${T.cardHi},${T.card})`:T.card, border:`1px solid ${(h||p.hot)?p.col+"66":T.border}`, borderRadius:20, padding:"34px 28px", position:"relative", overflow:"hidden", boxShadow:p.hot?`0 0 60px ${p.col}22,inset 0 1px 0 rgba(255,255,255,0.1)`:h?`0 20px 50px rgba(0,0,0,.5)`:"inset 0 1px 0 rgba(255,255,255,0.04)", transition:"all 0.5s cubic-bezier(0.34,1.56,0.64,1)" }}
+                onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}
+              >
+                {p.hot&&<><div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${p.col}88,transparent)`}}/><div style={{position:"absolute",top:16,right:16,background:`linear-gradient(135deg,${p.col},${p.col}88)`,color:T.bg,fontFamily:"'Space Mono'",fontSize:8,letterSpacing:2,padding:"4px 10px",borderRadius:100,fontWeight:700}}>POPULAR</div></>}
+                <div style={{fontFamily:"'Space Mono'",fontSize:10,letterSpacing:3,color:p.col,marginBottom:12}}>{p.name}</div>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:52,lineHeight:1,color:"#fff",marginBottom:6}}>{p.price?`₹${p.price.toLocaleString()}`:"CUSTOM"}</div>
+                <div style={{fontSize:13,color:T.muted,marginBottom:26}}>{p.price?"/month · All 5 agents":"Enterprise grade"}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:11,marginBottom:26}}>
+                  {p.features.map(f=><div key={f} style={{display:"flex",gap:9,alignItems:"center",fontSize:14,color:"#aab8cc"}}><span style={{color:p.col,fontSize:14}}>✓</span>{f}</div>)}
+                </div>
+                <Btn col={p.col} full onClick={()=>onBuy(p.name,p.price)}>{p.price?`BUY ${p.name} →`:"CONTACT ↗"}</Btn>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ ...animSw(v,400), textAlign:"center", marginTop:22, fontSize:13, color:T.muted }}>
+          💳 GPay · PhonePe · UPI · Call &nbsp;|&nbsp; 🔒 Secure · Cancel anytime · Setup 48hrs
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SectionCTA({ onBuy }) {
+  const [ref, v] = useReveal(0.2);
+  return (
+    <section id="start" style={{ minHeight:"100vh", scrollSnapAlign:"start", scrollSnapStop:"always", display:"flex", flexDirection:"column", justifyContent:"center", padding:"80px 6%", position:"relative", zIndex:1 }}>
+      <div ref={ref} style={{ maxWidth:820, margin:"0 auto", width:"100%" }}>
+        <div style={{ ...animSw(v,0,"scale"), background:`linear-gradient(160deg,${T.cardHi},${T.card})`, border:`1px solid ${T.cyan}33`, borderRadius:24, padding:"76px 56px", textAlign:"center", position:"relative", overflow:"hidden", boxShadow:`0 0 100px ${T.cyan}18,inset 0 1px 0 rgba(255,255,255,0.08)` }}>
+          <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${T.cyan}88,transparent)`}}/>
+          <div style={{position:"absolute",inset:0,background:`radial-gradient(circle at 50% 0%,${T.cyan}09,transparent 60%)`,pointerEvents:"none"}}/>
+          <div style={{...animSw(v,80)}}><Tag>// STOP DOING WHAT AI CAN DO</Tag></div>
+          <div style={{ ...animSw(v,160), fontFamily:"'Bebas Neue'", fontSize:"clamp(30px,5vw,60px)", letterSpacing:3, marginBottom:16 }}>
+            YOUR BUSINESS COULD BE<br/><span style={{color:T.cyan}}>FULLY AUTOMATED BY TOMORROW</span>
+          </div>
+          <p style={{ ...animSw(v,240), fontSize:16, color:T.soft, maxWidth:480, margin:"0 auto 32px", lineHeight:1.75 }}>
+            Every booking you take manually. Every FAQ you type. Every call you miss. AI handles all of it — from ₹3,000/month.
+          </p>
+          <div style={{ ...animSw(v,320), display:"flex", gap:14, justifyContent:"center", flexWrap:"wrap", marginBottom:28 }}>
+            <Btn col={T.cyan} glow onClick={()=>onBuy("PRO",5000)}>🚀 GET STARTED NOW</Btn>
+            <Btn col={T.green} ghost onClick={()=>window.open(`https://wa.me/${HUN}`,"_blank")}>📱 WHATSAPP HUN</Btn>
+          </div>
+          <div style={{ ...animSw(v,380), display:"flex", gap:24, justifyContent:"center", flexWrap:"wrap", fontSize:13, color:T.muted, marginBottom:28 }}>
+            {["✓ No contract","✓ 48hr setup","✓ Cancel anytime","✓ Free strategy call"].map(t=><span key={t}>{t}</span>)}
+          </div>
+          <div style={{ ...animSw(v,440), padding:"14px 20px", background:`${T.green}0a`, border:`1px solid ${T.green}22`, borderRadius:12, display:"inline-block" }}>
+            <span style={{fontSize:13,color:T.soft}}>Direct line: </span>
+            <span style={{fontFamily:"'Space Mono'",fontSize:14,color:T.green,letterSpacing:2}}>+91 7673962811</span>
+            <span style={{fontSize:13,color:T.muted}}>  · Hun Lyngdoh</span>
+          </div>
+        </div>
+        <div style={{ marginTop:40, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12, paddingTop:24, borderTop:`1px solid ${T.border}` }}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:20,letterSpacing:4}}>AUTO<span style={{color:T.cyan}}>MATA</span></div>
+          <div style={{fontSize:12,color:T.muted}}>Built by Hun Lyngdoh · @Hunlyngdoh1</div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}><Dot col={T.green}/><span style={{fontFamily:"'Space Mono'",fontSize:9,color:T.green,letterSpacing:1}}>PLATFORM LIVE</span></div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ── 10. ROOT APP ── */
+export default function App() {
+  const [screen, setScreen] = useState("landing");
+  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [bizData, setBizData] = useState({});
+  const [payModal, setPayModal] = useState(null);
+
+  const sections = ["hero","agents","demo","pricing","start"];
+  const active = useActiveSection(sections);
+
+  const scrollTo = id => {
+    document.getElementById(id)?.scrollIntoView({ behavior:"smooth", block:"start" });
+  };
+
+  const handleBuy = (plan, price) => {
+    if (!price) { window.open(`tel:+${HUN}`); return; }
+    setPayModal({ plan, price });
+  };
+
+  const handlePaySuccess = (plan) => {
+    setPayModal(null);
+    setSelectedPlan(plan);
+    setScreen("onboard");
+  };
+
+  if (screen==="onboard") return <Onboard plan={selectedPlan} onDone={b=>{setBizData(b);setScreen("dashboard");}}/>;
+  if (screen==="dashboard") return <Dashboard biz={bizData} plan={selectedPlan} onBack={()=>setScreen("landing")}/>;
+
+  return (
+    <div style={{ background:T.bg, fontFamily:"'DM Sans',sans-serif", color:T.text }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;}
+        ::-webkit-scrollbar{width:5px;background:${T.bg}}
+        ::-webkit-scrollbar-thumb{background:${T.cyan}44;border-radius:3px}
+        @keyframes pulseD{0%,100%{opacity:.6;transform:scale(1)}50%{opacity:1;transform:scale(1.3)}}
+        @keyframes pingD{0%{transform:scale(1);opacity:.4}100%{transform:scale(2.5);opacity:0}}
+        @keyframes floatAnim{0%,100%{transform:translateY(0)}50%{transform:translateY(-16px)}}
+        @keyframes spinRing{to{transform:rotate(360deg) rotateX(55deg)}}
+        @keyframes spinAnim{to{transform:rotate(360deg)}}
+        @keyframes dotB{0%,80%,100%{transform:scale(0.5);opacity:.3}40%{transform:scale(1);opacity:1}}
+        @keyframes popIn{from{opacity:0;transform:scale(0.88)}to{opacity:1;transform:scale(1)}}
+        .snap-wrap{height:100vh;overflow-y:scroll;scroll-snap-type:y mandatory;scroll-behavior:smooth;}
+        .snap-wrap::-webkit-scrollbar{width:5px;background:${T.bg}}
+        .snap-wrap::-webkit-scrollbar-thumb{background:${T.cyan}44;border-radius:3px}
+        button{outline:none;}
+        select option{background:#0d1425}
+      `}</style>
+
+      <Particles/>
+
+      {/* Fixed nav */}
+      <nav style={{ position:"fixed", top:0, left:0, right:0, zIndex:1000, padding:"16px 6%", background:"linear-gradient(180deg,rgba(6,8,15,0.96),rgba(6,8,15,0))", backdropFilter:"blur(16px)", borderBottom:`1px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ fontFamily:"'Bebas Neue'", fontSize:23, letterSpacing:4 }}>
+          AUTO<span style={{color:T.cyan}}>MATA</span>
+          <span style={{fontSize:8,fontFamily:"'Space Mono'",color:T.muted,marginLeft:10,letterSpacing:1}}>PLATFORM</span>
+        </div>
+        {/* Snap dot indicator */}
+        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+          {sections.map(id=>(
+            <button key={id} onClick={()=>scrollTo(id)} style={{ width:active===id?24:7, height:7, borderRadius:4, background:active===id?T.cyan:`${T.cyan}33`, border:"none", cursor:"pointer", transition:"all 0.35s ease", padding:0 }}/>
+          ))}
+        </div>
+        <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+          <Btn ghost col={T.cyan} sm onClick={()=>scrollTo("pricing")}>PLANS</Btn>
+          <Btn col={T.cyan} sm glow onClick={()=>scrollTo("pricing")}>GET STARTED →</Btn>
+        </div>
+      </nav>
+
+      {/* Snap scroll wrapper */}
+      <div className="snap-wrap">
+        <SectionHero onScroll={scrollTo}/>
+        <SectionAgents/>
+        <SectionDemo/>
+        <SectionPricing onBuy={handleBuy}/>
+        <SectionCTA onBuy={handleBuy}/>
+      </div>
+
+      {payModal && <PayModal plan={payModal.plan} price={payModal.price} onClose={()=>setPayModal(null)} onSuccess={handlePaySuccess}/>}
+    </div>
+  );
+}
